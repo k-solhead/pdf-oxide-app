@@ -320,6 +320,7 @@ if uploaded is not None:
         st.session_state.uploaded_hash = digest
         clear_drag_selection()
         st.session_state.selected_ref_page = None
+        st.session_state.ref_page_widget = 0
 
 # session_state にキャッシュがあればそれを使う
 if st.session_state.uploaded_bytes:
