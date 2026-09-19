@@ -222,6 +222,9 @@ def drag_component():
     if (args.img_url && args.img_url !== currentImage) {
       currentImage = args.img_url;
       I.src = args.img_url;
+      I.onerror = function() {
+        console.error('Failed to load image:', args.img_url);
+      };
     }
 
     if (args.clear_nonce !== currentClearNonce) {
@@ -293,7 +296,13 @@ if st.session_state.uploaded_bytes:
     tmp = "/tmp/_pdf_upload.pdf"
     with open(tmp, "wb") as f:
         f.write(buf)
-    doc = PdfDocument(tmp)
+    
+    try:
+        doc = PdfDocument(tmp)
+    except Exception as e:
+        st.error(f"❌ PDF 読み込みエラー: {e}")
+        st.stop()
+    
     n = doc.page_count()
     st.info(f"ページ数: {n}（ファイル: {st.session_state.uploaded_name or 'unknown'}）")
 
@@ -315,8 +324,26 @@ if st.session_state.uploaded_bytes:
     image_prefix = st.session_state.drag_session_id
     ref_img_filename = f"{image_prefix}_ref_page_{ref_page}.png"
     ref_img_path = images_dir / ref_img_filename
-    img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
-    ref_img_path.write_bytes(img_bytes)
+    
+    # ── 画像生成 ──
+    try:
+        img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
+        if not img_bytes or len(img_bytes) == 0:
+            st.error("❌ PDF ページを画像に変換できませんでした（空の結果）")
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ PDF ページ描画エラー: {e}")
+        st.stop()
+    
+    # ── 画像ファイル保存 ──
+    try:
+        ref_img_path.write_bytes(img_bytes)
+        st.caption(f"✓ 画像保存: {ref_img_path} ({len(img_bytes)} bytes)")
+    except Exception as e:
+        st.error(f"❌ 画像ファイル書き込みエラー: {e}")
+        st.stop()
+    
+    # クリーンアップ
     for stale_image in images_dir.glob(f"{image_prefix}_ref_page_*.png"):
         if stale_image.name != ref_img_filename:
             stale_image.unlink(missing_ok=True)
@@ -325,10 +352,14 @@ if st.session_state.uploaded_bytes:
 
     img = Image.open(io.BytesIO(img_bytes))
     iw, ih = img.size
+    st.caption(f"✓ 画像寸法: {iw} × {ih} px")
 
     # 画像本体は base64 で渡さず、ローカルHTTPサーバーURLを渡す
+    img_url = f"http://localhost:{port}/{ref_img_filename}"
+    st.caption(f"画像URL: `{img_url}`")
+    
     raw_coords = drag_component()(
-        img_url=f"http://localhost:{port}/{ref_img_filename}",
+        img_url=img_url,
         nw=iw,
         nh=ih,
         max_w=960,
