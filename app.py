@@ -21,7 +21,7 @@ if "bbox_pt" not in st.session_state:
 if "drag_raw" not in st.session_state:
     st.session_state.drag_raw = None
 
-# ── HTML: 画像上ドラッグ → query_params 経由で座標送信 ──
+# ── HTML: 画像上ドラッグ → 矩形座標 (画像ピクセル) ──
 def drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
     return f"""<!DOCTYPE html>
 <html><head>
@@ -54,9 +54,10 @@ window.addEventListener('mouseup',e=>{{
   if(!drag)return; drag=0;
   const x1=Math.min(rx,rx2),y1=Math.min(ry,ry2),x2=Math.max(rx,rx2),y2=Math.max(ry,ry2);
   if(x2-x1<10||y2-y1<10){{return;}}
-  const p = new URLSearchParams(window.location.search);
+  // parent page の URL を書き換えて query_params 経由で送信
+  const p = new URLSearchParams(window.parent.location.search);
   p.set('coords', JSON.stringify({{ix1:x1,iy1:y1,ix2:x2,iy2:y2}}));
-  window.location.search = p.toString();
+  window.parent.location.search = p.toString();
 }});
 sz();
 }})();
@@ -107,8 +108,10 @@ if uploaded:
             st.warning(f"座標パースエラー: {e}")
             st.query_params.clear()
 
-    # markdown + unsafe_html でドラッグUIを描画
-    st.markdown(drag_html(b64, iw, ih, 960), unsafe_allow_html=True)
+    # html() で iframe 描画 → レイアウト正常、window.parent で親ページ通信
+    st.components.v1.html(drag_html(b64, iw, ih, 960),
+                          height=int(960 * ih / iw) + 40,
+                          scrolling=False)
 
     if st.session_state.bbox_pt:
         x1, y1, x2, y2 = st.session_state.bbox_pt
