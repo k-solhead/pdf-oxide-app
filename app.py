@@ -24,6 +24,8 @@ if "uploaded_bytes" not in st.session_state:
     st.session_state.uploaded_bytes = None
 if "uploaded_name" not in st.session_state:
     st.session_state.uploaded_name = None
+if "coords_processed" not in st.session_state:
+    st.session_state.coords_processed = False
 
 # ── HTML: 画像上ドラッグ → 矩形座標 (画像ピクセル) ──
 def drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
@@ -74,7 +76,7 @@ def img_pixel_to_pdf(ix1, iy1, ix2, iy2, img_w, img_h, llx, lly, urx, ury, dpi=1
 # ── query_params から座標を処理 ──
 def process_coords(iw, ih, llx, lly, urx, ury):
     raw = st.query_params.get("coords")
-    if raw:
+    if raw and not st.session_state.coords_processed:
         if isinstance(raw, list):
             raw = raw[0]
         try:
@@ -83,10 +85,10 @@ def process_coords(iw, ih, llx, lly, urx, ury):
                                      iw, ih, llx, lly, urx, ury, DPI)
             st.session_state.bbox_pt = bbox
             st.session_state.drag_raw = c
-            st.query_params.clear()
+            st.session_state.coords_processed = True
         except Exception as e:
             st.warning(f"座標パースエラー: {e}")
-            st.query_params.clear()
+            st.session_state.coords_processed = True
 
 # ── ファイルアップロード or セッション復元 ──
 uploaded = st.file_uploader("PDF をアップロード", type="pdf")
@@ -94,6 +96,9 @@ if uploaded:
     buf = uploaded.read()
     st.session_state.uploaded_bytes = buf
     st.session_state.uploaded_name = uploaded.name
+    st.session_state.coords_processed = False
+    st.session_state.bbox_pt = None
+    st.session_state.drag_raw = None
     # session_state は通常の rerun でもフルリロードでも保持されるので rerun 不要
 
 # session_state にキャッシュがあればそれを使う
@@ -134,6 +139,7 @@ if st.session_state.uploaded_bytes:
         if st.button("🔄 クリア"):
             st.session_state.bbox_pt = None
             st.session_state.drag_raw = None
+            st.session_state.coords_processed = False
             st.rerun()
 
     mode = st.radio("抽出モード", ["テキスト抽出", "マークダウン変換", "両方"], index=0)
