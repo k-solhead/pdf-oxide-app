@@ -320,7 +320,6 @@ if uploaded is not None:
         st.session_state.uploaded_hash = digest
         clear_drag_selection()
         st.session_state.selected_ref_page = None
-        st.session_state.ref_page_widget = 0
 
 # session_state にキャッシュがあればそれを使う
 if st.session_state.uploaded_bytes:
@@ -336,8 +335,13 @@ if st.session_state.uploaded_bytes:
         st.stop()
     
     n = doc.page_count()
+    if n <= 0:
+        st.error("❌ PDF にページがありません。")
+        st.stop()
     st.info(f"ページ数: {n}（ファイル: {st.session_state.uploaded_name or 'unknown'}）")
 
+    if st.session_state.selected_ref_page is None:
+        st.session_state.ref_page_widget = 0
     ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1, key="ref_page_widget", on_change=on_ref_page_change)
     if st.session_state.selected_ref_page is None:
         st.session_state.selected_ref_page = ref_page
