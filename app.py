@@ -4,6 +4,11 @@ pdf-oxide-app — PDF 範囲指定テキスト抽出アプリ
 """
 import hashlib
 import io
+import os
+import threading
+import uuid
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import streamlit as st
@@ -30,13 +35,57 @@ if "uploaded_hash" not in st.session_state:
     st.session_state.uploaded_hash = None
 if "drag_clear_nonce" not in st.session_state:
     st.session_state.drag_clear_nonce = 0
+if "drag_session_id" not in st.session_state:
+    st.session_state.drag_session_id = uuid.uuid4().hex
+
+
+COMP_DIR = Path("/tmp/pdf_oxide_drag_component")
+IMAGES_DIR = COMP_DIR / "images"
+IMAGE_SERVER_PORT_ENV = "PDF_OXIDE_IMAGE_SERVER_PORT"
+_image_server = None
+_image_server_lock = threading.Lock()
+
+
+class _QuietImageHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+
+@st.cache_resource
+def get_image_server():
+    global _image_server
+    with _image_server_lock:
+        if _image_server is not None:
+            return _image_server
+
+        COMP_DIR.mkdir(parents=True, exist_ok=True)
+        IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+        try:
+            port = int(os.getenv(IMAGE_SERVER_PORT_ENV, "8765"))
+        except ValueError as exc:
+            raise RuntimeError(f"{IMAGE_SERVER_PORT_ENV} は整数で指定してください。") from exc
+
+        handler = partial(_QuietImageHandler, directory=str(IMAGES_DIR))
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+        except OSError as exc:
+            raise RuntimeError(
+                f"画像配信用ポート {port} を使用できません。"
+                f"環境変数 {IMAGE_SERVER_PORT_ENV} で空きポートを指定してください。"
+            ) from exc
+
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        _image_server = {"port": port, "images_dir": IMAGES_DIR, "server": server}
+        return _image_server
 
 
 @st.cache_resource
 def drag_component():
-    comp_dir = Path("/tmp/pdf_oxide_drag_component")
-    comp_dir.mkdir(parents=True, exist_ok=True)
-    index = comp_dir / "index.html"
+    COMP_DIR.mkdir(parents=True, exist_ok=True)
+    index = COMP_DIR / "index.html"
     if not index.exists():
         index.write_text(
             """<!DOCTYPE html>
@@ -209,7 +258,7 @@ def drag_component():
 """,
             encoding="utf-8",
         )
-    return components.declare_component("pdf_drag_selector", path=str(comp_dir))
+    return components.declare_component("pdf_drag_selector", path=str(COMP_DIR))
 
 
 # ── 座標変換 ──
@@ -255,22 +304,31 @@ if st.session_state.uploaded_bytes:
     st.caption(f"ページサイズ: {pt_w:.0f} × {pt_h:.0f} pt")
 
     DPI = 150
-    comp_dir = Path("/tmp/pdf_oxide_drag_component")
-    comp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        server_info = get_image_server()
+    except RuntimeError as exc:
+        st.error(str(exc))
+        st.stop()
 
-    ref_img_filename = f"ref_page_{ref_page}.png"
-    ref_img_path = comp_dir / ref_img_filename
+    port = server_info["port"]
+    images_dir = server_info["images_dir"]
+    image_prefix = st.session_state.drag_session_id
+    ref_img_filename = f"{image_prefix}_ref_page_{ref_page}.png"
+    ref_img_path = images_dir / ref_img_filename
     img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
     ref_img_path.write_bytes(img_bytes)
+    for stale_image in images_dir.glob(f"{image_prefix}_ref_page_*.png"):
+        if stale_image.name != ref_img_filename:
+            stale_image.unlink(missing_ok=True)
 
     from PIL import Image
 
     img = Image.open(io.BytesIO(img_bytes))
     iw, ih = img.size
 
-    # 画像本体は base64 で渡さず、コンポーネント同梱ディレクトリ上の相対URLを渡す
+    # 画像本体は base64 で渡さず、ローカルHTTPサーバーURLを渡す
     raw_coords = drag_component()(
-        img_url=ref_img_filename,
+        img_url=f"http://localhost:{port}/{ref_img_filename}",
         nw=iw,
         nh=ih,
         max_w=960,
