@@ -17,15 +17,14 @@ st.markdown(
 
 # ── セッション状態 ──
 if "bbox_pt" not in st.session_state:
-    st.session_state.bbox_pt = None       # (llx, lly, urx, ury) in PDF points
+    st.session_state.bbox_pt = None
 if "drag_raw" not in st.session_state:
     st.session_state.drag_raw = None
 
-# ── HTML コンポーネント：画像上ドラッグ → 矩形座標 (画像ピクセル) ──
-def make_drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
+# ── HTML: 画像上ドラッグ → query_params 経由で座標送信 ──
+def drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
     return f"""<!DOCTYPE html>
 <html><head>
-<script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.3.0/dist/streamlit-component-lib.min.js"></script>
 </head><body style="margin:0;padding:0;background:#1e1e1e;text-align:center;">
 <div style="position:relative;display:inline-block;max-width:{max_w}px;width:100%;">
   <img id="P" src="data:image/png;base64,{img_b64}"
@@ -54,16 +53,17 @@ C.addEventListener('mousemove',e=>{{if(!drag)return; let p=ic(e); rx2=p.ix; ry2=
 window.addEventListener('mouseup',e=>{{
   if(!drag)return; drag=0;
   const x1=Math.min(rx,rx2),y1=Math.min(ry,ry2),x2=Math.max(rx,rx2),y2=Math.max(ry,ry2);
-  if(x2-x1<10||y2-y1<10){{Streamlit.setComponentValue(null);return;}}
-  Streamlit.setComponentValue(JSON.stringify({{ix1:x1,iy1:y1,ix2:x2,iy2:y2}}));
+  if(x2-x1<10||y2-y1<10){{return;}}
+  const p = new URLSearchParams(window.location.search);
+  p.set('coords', JSON.stringify({{ix1:x1,iy1:y1,ix2:x2,iy2:y2}}));
+  window.location.search = p.toString();
 }});
-sz(); Streamlit.setComponentReady(); Streamlit.setComponentValue(null);
+sz();
 }})();
 </script></body></html>"""
 
 # ── 座標変換 ──
 def img_pixel_to_pdf(ix1, iy1, ix2, iy2, img_w, img_h, llx, lly, urx, ury, dpi=150):
-    """画像ピクセル → PDF points (llx, lly, urx, ury)"""
     s = 72.0 / dpi
     return (llx + ix1 * s, ury - iy2 * s, llx + ix2 * s, ury - iy1 * s)
 
@@ -91,26 +91,24 @@ if uploaded:
     img = Image.open(io.BytesIO(img_bytes))
     iw, ih = img.size
 
-    # HTML component with key — value stored in session_state on next run
-    st.components.v1.html(
-        make_drag_html(b64, iw, ih, 960),
-        height=int(960 * ih / iw) + 40,
-        scrolling=False,
-        key="drag_comp",
-    )
-
-    drag_val = st.session_state.get("drag_comp")
-    if drag_val is not None and drag_val != "":
+    # query_params 経由の座標を処理
+    raw = st.query_params.get("coords")
+    if raw:
+        if isinstance(raw, list):
+            raw = raw[0]
         try:
-            c = json.loads(drag_val) if isinstance(drag_val, str) else drag_val
-            st.session_state.drag_raw = c
+            c = json.loads(raw)
             bbox = img_pixel_to_pdf(c["ix1"], c["iy1"], c["ix2"], c["iy2"],
                                      iw, ih, llx, lly, urx, ury, DPI)
             st.session_state.bbox_pt = bbox
-            st.success(f"✅ 範囲: ({bbox[0]:.0f}, {bbox[1]:.0f}) → ({bbox[2]:.0f}, {bbox[3]:.0f}) pt")
+            st.session_state.drag_raw = c
+            st.query_params.clear()
         except Exception as e:
-            st.warning(f"座標エラー: {e}")
-            st.session_state.drag_raw = None
+            st.warning(f"座標パースエラー: {e}")
+            st.query_params.clear()
+
+    # markdown + unsafe_html でドラッグUIを描画
+    st.markdown(drag_html(b64, iw, ih, 960), unsafe_allow_html=True)
 
     if st.session_state.bbox_pt:
         x1, y1, x2, y2 = st.session_state.bbox_pt
@@ -140,7 +138,6 @@ if uploaded:
                     text_result = "\n".join(lines)
 
                 if mode in ("マークダウン変換", "両方"):
-                    # PdfPageRegion に to_markdown は無いので extract_text で代替
                     lines = []
                     for i in range(n):
                         region = doc.within(i, bbox)
