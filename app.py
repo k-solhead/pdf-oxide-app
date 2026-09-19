@@ -20,6 +20,10 @@ if "bbox_pt" not in st.session_state:
     st.session_state.bbox_pt = None
 if "drag_raw" not in st.session_state:
     st.session_state.drag_raw = None
+if "uploaded_bytes" not in st.session_state:
+    st.session_state.uploaded_bytes = None
+if "uploaded_name" not in st.session_state:
+    st.session_state.uploaded_name = None
 
 # ── HTML: 画像上ドラッグ → 矩形座標 (画像ピクセル) ──
 def drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
@@ -54,7 +58,6 @@ window.addEventListener('mouseup',e=>{{
   if(!drag)return; drag=0;
   const x1=Math.min(rx,rx2),y1=Math.min(ry,ry2),x2=Math.max(rx,rx2),y2=Math.max(ry,ry2);
   if(x2-x1<10||y2-y1<10){{return;}}
-  // parent page の URL を書き換えて query_params 経由で送信
   const p = new URLSearchParams(window.parent.location.search);
   p.set('coords', JSON.stringify({{ix1:x1,iy1:y1,ix2:x2,iy2:y2}}));
   window.parent.location.search = p.toString();
@@ -68,31 +71,8 @@ def img_pixel_to_pdf(ix1, iy1, ix2, iy2, img_w, img_h, llx, lly, urx, ury, dpi=1
     s = 72.0 / dpi
     return (llx + ix1 * s, ury - iy2 * s, llx + ix2 * s, ury - iy1 * s)
 
-# ── UI ──
-uploaded = st.file_uploader("PDF をアップロード", type="pdf")
-if uploaded:
-    buf = uploaded.read()
-    tmp = "/tmp/_pdf_upload.pdf"
-    with open(tmp, "wb") as f:
-        f.write(buf)
-    doc = PdfDocument(tmp)
-    n = doc.page_count()
-    st.info(f"ページ数: {n}")
-
-    ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1)
-    llx, lly, urx, ury = doc.page_media_box(ref_page)
-    pt_w = urx - llx
-    pt_h = ury - lly
-    st.caption(f"ページサイズ: {pt_w:.0f} × {pt_h:.0f} pt")
-
-    DPI = 150
-    img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
-    b64 = base64.b64encode(img_bytes).decode()
-    from PIL import Image
-    img = Image.open(io.BytesIO(img_bytes))
-    iw, ih = img.size
-
-    # query_params 経由の座標を処理
+# ── query_params から座標を処理 ──
+def process_coords(iw, ih, llx, lly, urx, ury):
     raw = st.query_params.get("coords")
     if raw:
         if isinstance(raw, list):
@@ -108,7 +88,41 @@ if uploaded:
             st.warning(f"座標パースエラー: {e}")
             st.query_params.clear()
 
-    # html() で iframe 描画 → レイアウト正常、window.parent で親ページ通信
+# ── ファイルアップロード or セッション復元 ──
+uploaded = st.file_uploader("PDF をアップロード", type="pdf")
+if uploaded:
+    buf = uploaded.read()
+    st.session_state.uploaded_bytes = buf
+    st.session_state.uploaded_name = uploaded.name
+    st.rerun()  # 一度 rerun して session_state 確定 → リロード耐性
+
+# session_state にキャッシュがあればそれを使う
+if st.session_state.uploaded_bytes:
+    buf = st.session_state.uploaded_bytes
+    tmp = "/tmp/_pdf_upload.pdf"
+    with open(tmp, "wb") as f:
+        f.write(buf)
+    doc = PdfDocument(tmp)
+    n = doc.page_count()
+    st.info(f"ページ数: {n}（ファイル: {st.session_state.uploaded_name or 'unknown'}）")
+
+    ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1)
+    llx, lly, urx, ury = doc.page_media_box(ref_page)
+    pt_w = urx - llx
+    pt_h = ury - lly
+    st.caption(f"ページサイズ: {pt_w:.0f} × {pt_h:.0f} pt")
+
+    DPI = 150
+    img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
+    b64 = base64.b64encode(img_bytes).decode()
+    from PIL import Image
+    img = Image.open(io.BytesIO(img_bytes))
+    iw, ih = img.size
+
+    # query_params 経由の座標を処理（リロード後も session_state が生きてる）
+    process_coords(iw, ih, llx, lly, urx, ury)
+
+    # html() で iframe 描画
     st.components.v1.html(drag_html(b64, iw, ih, 960),
                           height=int(960 * ih / iw) + 40,
                           scrolling=False)
@@ -157,7 +171,7 @@ if uploaded:
                         st.text(text_result[:3000])
                     st.download_button(
                         label="📥 DL", data=text_result,
-                        file_name=f"text_{uploaded.name.replace('.pdf','.txt')}",
+                        file_name=f"text_{st.session_state.uploaded_name.replace('.pdf','.txt') if st.session_state.uploaded_name else 'output.txt'}",
                         mime="text/plain",
                     )
             if md_result:
@@ -167,7 +181,7 @@ if uploaded:
                         st.text(md_result[:3000])
                     st.download_button(
                         label="📥 DL", data=md_result,
-                        file_name=f"md_{uploaded.name.replace('.pdf','.md')}",
+                        file_name=f"md_{st.session_state.uploaded_name.replace('.pdf','.md') if st.session_state.uploaded_name else 'output.md'}",
                         mime="text/markdown",
                     )
             if mode == "両方":
@@ -175,7 +189,7 @@ if uploaded:
                     label="📥 両方DL",
                     data=("="*60+"\nTEXT\n"+"="*60+"\n"+text_result+
                           "\n\n"+"="*60+"\nMARKDOWN\n"+"="*60+"\n"+md_result),
-                    file_name=f"combined_{uploaded.name.replace('.pdf','.txt')}",
+                    file_name=f"combined_{st.session_state.uploaded_name.replace('.pdf','.txt') if st.session_state.uploaded_name else 'output.txt'}",
                     mime="text/plain",
                 )
 
