@@ -4,7 +4,6 @@ pdf-oxide-app — PDF 範囲指定テキスト抽出アプリ
 """
 import hashlib
 import io
-import base64
 from pathlib import Path
 
 import streamlit as st
@@ -34,11 +33,13 @@ if "drag_clear_nonce" not in st.session_state:
 
 
 COMP_DIR = Path("/tmp/pdf_oxide_drag_component")
+COMP_IMG_DIR = COMP_DIR / "images"
 
 
 @st.cache_resource
 def drag_component():
     COMP_DIR.mkdir(parents=True, exist_ok=True)
+    COMP_IMG_DIR.mkdir(parents=True, exist_ok=True)
     index = COMP_DIR / "index.html"
     index.write_text(
         """<!DOCTYPE html>
@@ -172,9 +173,9 @@ def drag_component():
     currentMaxW = Number(args.max_w || 960);
     wrap.style.maxWidth = `${currentMaxW}px`;
 
-    if (args.img_data_url && args.img_data_url !== currentImage) {
-      currentImage = args.img_data_url;
-      I.src = args.img_data_url;
+    if (args.img_path && args.img_path !== currentImage) {
+      currentImage = args.img_path;
+      I.src = new URL(args.img_path, window.location.href).toString();
       I.onerror = function() {
         console.error('Failed to load image');
       };
@@ -215,6 +216,14 @@ def drag_component():
         encoding="utf-8",
     )
     return components.declare_component("pdf_drag_selector", path=str(COMP_DIR))
+
+
+def save_component_image(img_bytes: bytes, image_key: str) -> str:
+    COMP_IMG_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{image_key}.png"
+    image_path = COMP_IMG_DIR / filename
+    image_path.write_bytes(img_bytes)
+    return f"images/{filename}"
 
 
 # ── 座標変換 ──
@@ -283,11 +292,13 @@ if st.session_state.uploaded_bytes:
         iw, ih = img.size
     st.caption(f"✓ 画像寸法: {iw} × {ih} px")
 
-    img_data_url = f"data:image/png;base64,{base64.b64encode(img_bytes).decode('ascii')}"
-    st.caption(f"✓ 選択中の参照ページを data URL で渡しています ({len(img_bytes)} bytes)")
+    image_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+    image_key = f"{st.session_state.uploaded_hash}_page{ref_page}_dpi{DPI}_{image_hash}"
+    img_path = save_component_image(img_bytes, image_key)
+    st.caption(f"✓ 選択中の参照ページ画像をコンポーネント用ファイルとして保存しました ({len(img_bytes)} bytes)")
     
     raw_coords = drag_component()(
-        img_data_url=img_data_url,
+        img_path=img_path,
         nw=iw,
         nh=ih,
         max_w=960,

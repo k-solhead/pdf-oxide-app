@@ -44,8 +44,8 @@ docker run -p 8501:8501 pdf-oxide-app
 - `PdfPageRegion.extract_text()` — その範囲内のテキストのみを返す
 - マウスドラッグ座標 → 画像ピクセル → PDF 点座標 の変換は `img_pixel_to_pdf()` で行う
 - レンダリング DPI=150、画像ピクセルと PDF 点の比率は `72/DPI`
-- 参照画像は `/tmp/pdf_oxide_drag_component/images/` に保存し、ローカルHTTPサーバー経由（`http://localhost:{PORT}/{filename}`）でコンポーネントに渡す
-- 画像配信用ポートは環境変数 `PDF_OXIDE_IMAGE_SERVER_PORT`（既定: `8765`）で変更可能
+- 参照画像は `/tmp/pdf_oxide_drag_component/images/` に保存し、コンポーネント配下の静的ファイルとして読み込む
+- コンポーネントには巨大な base64 data URL ではなく、短い画像パスと寸法情報だけを渡す
 
 ## 構成
 
