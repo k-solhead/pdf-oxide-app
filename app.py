@@ -94,7 +94,7 @@ if uploaded:
     buf = uploaded.read()
     st.session_state.uploaded_bytes = buf
     st.session_state.uploaded_name = uploaded.name
-    st.rerun()  # 一度 rerun して session_state 確定 → リロード耐性
+    # session_state は通常の rerun でもフルリロードでも保持されるので rerun 不要
 
 # session_state にキャッシュがあればそれを使う
 if st.session_state.uploaded_bytes:
