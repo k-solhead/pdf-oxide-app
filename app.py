@@ -22,7 +22,7 @@ if "drag_raw" not in st.session_state:
     st.session_state.drag_raw = None
 
 # ── declare_component で双方向通信可能なカスタムコンポーネント ──
-_drag_comp = st.components.v1.declare_component("pdf_drag_selector")
+_drag_comp = st.components.v1.declare_component("pdf_drag_selector", url="")
 
 # ── HTML コンポーネント：画像上ドラッグ → 矩形座標 (画像ピクセル) ──
 def make_drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
