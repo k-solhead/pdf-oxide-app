@@ -38,6 +38,8 @@ if "drag_clear_nonce" not in st.session_state:
     st.session_state.drag_clear_nonce = 0
 if "component_image_id" not in st.session_state:
     st.session_state.component_image_id = uuid.uuid4().hex
+if "selected_ref_page" not in st.session_state:
+    st.session_state.selected_ref_page = None
 
 
 @st.cache_resource
@@ -85,6 +87,7 @@ def drag_component():
   let start = null;
   let selection = null;
   let currentImage = null;
+  let currentImageKey = null;
   let currentClearNonce = null;
   let currentMaxW = 960;
 
@@ -180,6 +183,8 @@ def drag_component():
       iy1: y1,
       ix2: x2,
       iy2: y2,
+      image_key: currentImageKey,
+      clear_nonce: currentClearNonce,
     });
   });
 
@@ -192,14 +197,21 @@ def drag_component():
     NW = Number(args.nw || 1);
     NH = Number(args.nh || 1);
     currentMaxW = Number(args.max_w || 960);
+    currentImageKey = args.image_key || null;
     wrap.style.maxWidth = `${currentMaxW}px`;
 
-    if (args.img_path && args.img_path !== currentImage) {
-      currentImage = args.img_path;
-      I.src = new URL(args.img_path, document.baseURI).toString();
-      I.onerror = function() {
-        console.error('Failed to load image');
-      };
+    if (args.img_path) {
+      const nextImage = new URL(args.img_path, document.baseURI).toString();
+      if (nextImage !== currentImage) {
+        currentImage = nextImage;
+        dragging = false;
+        start = null;
+        selection = null;
+        I.src = nextImage;
+        I.onerror = function() {
+          console.error('Failed to load image');
+        };
+      }
     }
 
     if (args.clear_nonce !== currentClearNonce) {
@@ -295,6 +307,7 @@ if uploaded is not None:
         st.session_state.uploaded_hash = digest
         st.session_state.bbox_pt = None
         st.session_state.drag_raw = None
+        st.session_state.selected_ref_page = None
         st.session_state.drag_clear_nonce += 1
 
 # session_state にキャッシュがあればそれを使う
@@ -314,6 +327,12 @@ if st.session_state.uploaded_bytes:
     st.info(f"ページ数: {n}（ファイル: {st.session_state.uploaded_name or 'unknown'}）")
 
     ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1)
+    if st.session_state.selected_ref_page != ref_page:
+        if st.session_state.selected_ref_page is not None:
+            st.session_state.bbox_pt = None
+            st.session_state.drag_raw = None
+            st.session_state.drag_clear_nonce += 1
+        st.session_state.selected_ref_page = ref_page
     llx, lly, urx, ury = doc.page_media_box(ref_page)
     pt_w = urx - llx
     pt_h = ury - lly
@@ -344,6 +363,7 @@ if st.session_state.uploaded_bytes:
     
     raw_coords = drag_component()(
         img_path=img_path,
+        image_key=image_key,
         nw=iw,
         nh=ih,
         max_w=960,
@@ -353,7 +373,12 @@ if st.session_state.uploaded_bytes:
         default=None,
     )
 
-    if isinstance(raw_coords, dict) and {"ix1", "iy1", "ix2", "iy2"}.issubset(raw_coords.keys()):
+    if (
+        isinstance(raw_coords, dict)
+        and {"ix1", "iy1", "ix2", "iy2"}.issubset(raw_coords.keys())
+        and raw_coords.get("image_key") == image_key
+        and raw_coords.get("clear_nonce") == st.session_state.drag_clear_nonce
+    ):
         c = {
             "ix1": float(raw_coords["ix1"]),
             "iy1": float(raw_coords["iy1"]),
