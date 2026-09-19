@@ -4,7 +4,12 @@ pdf-oxide-app — PDF 範囲指定テキスト抽出アプリ
 """
 import hashlib
 import io
-import base64
+import os
+import shutil
+import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import streamlit as st
@@ -31,15 +36,32 @@ if "uploaded_hash" not in st.session_state:
     st.session_state.uploaded_hash = None
 if "drag_clear_nonce" not in st.session_state:
     st.session_state.drag_clear_nonce = 0
+if "component_image_id" not in st.session_state:
+    st.session_state.component_image_id = uuid.uuid4().hex
 
 
-COMP_DIR = Path("/tmp/pdf_oxide_drag_component")
+@st.cache_resource
+def component_workspace() -> tempfile.TemporaryDirectory:
+    return tempfile.TemporaryDirectory(prefix="pdf_oxide_drag_component_")
+
+
+def component_dirs() -> tuple[Path, Path]:
+    comp_dir = Path(component_workspace().name)
+    img_dir = comp_dir / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    return comp_dir, img_dir
+
+
+@st.cache_resource
+def image_cleanup_state() -> dict[str, object]:
+    return {"last_run": 0.0, "lock": threading.Lock()}
 
 
 @st.cache_resource
 def drag_component():
-    COMP_DIR.mkdir(parents=True, exist_ok=True)
-    index = COMP_DIR / "index.html"
+    comp_dir, _ = component_dirs()
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    index = comp_dir / "index.html"
     index.write_text(
         """<!DOCTYPE html>
 <html>
@@ -172,9 +194,9 @@ def drag_component():
     currentMaxW = Number(args.max_w || 960);
     wrap.style.maxWidth = `${currentMaxW}px`;
 
-    if (args.img_data_url && args.img_data_url !== currentImage) {
-      currentImage = args.img_data_url;
-      I.src = args.img_data_url;
+    if (args.img_path && args.img_path !== currentImage) {
+      currentImage = args.img_path;
+      I.src = new URL(args.img_path, document.baseURI).toString();
       I.onerror = function() {
         console.error('Failed to load image');
       };
@@ -214,7 +236,39 @@ def drag_component():
 """,
         encoding="utf-8",
     )
-    return components.declare_component("pdf_drag_selector", path=str(COMP_DIR))
+    return components.declare_component("pdf_drag_selector", path=str(comp_dir))
+
+
+def save_component_image(img_bytes: bytes, image_key: str) -> str:
+    _, img_dir = component_dirs()
+    session_img_dir = img_dir / st.session_state.component_image_id
+    session_img_dir.mkdir(parents=True, exist_ok=True)
+    filename = "current.png"
+    image_path = session_img_dir / filename
+    temp_path = session_img_dir / f"{image_key}_{uuid.uuid4().hex}.png"
+    temp_path.write_bytes(img_bytes)
+    os.replace(temp_path, image_path)
+    heartbeat_path = session_img_dir / ".active"
+    heartbeat_path.touch()
+
+    cleanup_state = image_cleanup_state()
+    now = time.time()
+    with cleanup_state["lock"]:
+        if now - cleanup_state["last_run"] >= 300:
+            cleanup_state["last_run"] = now
+            cutoff = now - 86400
+            for other_session_dir in img_dir.iterdir():
+                if other_session_dir == session_img_dir or not other_session_dir.is_dir():
+                    continue
+                try:
+                    active_path = other_session_dir / ".active"
+                    stale_at = active_path.stat().st_mtime if active_path.exists() else other_session_dir.stat().st_mtime
+                    if stale_at < cutoff:
+                        shutil.rmtree(other_session_dir)
+                except OSError:
+                    continue
+
+    return f"images/{st.session_state.component_image_id}/{filename}?v={image_key}"
 
 
 # ── 座標変換 ──
@@ -283,11 +337,13 @@ if st.session_state.uploaded_bytes:
         iw, ih = img.size
     st.caption(f"✓ 画像寸法: {iw} × {ih} px")
 
-    img_data_url = f"data:image/png;base64,{base64.b64encode(img_bytes).decode('ascii')}"
-    st.caption(f"✓ 選択中の参照ページを data URL で渡しています ({len(img_bytes)} bytes)")
+    image_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+    image_key = f"{st.session_state.uploaded_hash}_page{ref_page}_dpi{DPI}_{image_hash}"
+    img_path = save_component_image(img_bytes, image_key)
+    st.caption(f"✓ 選択中の参照ページ画像をコンポーネント用ファイルとして保存しました ({len(img_bytes)} bytes)")
     
     raw_coords = drag_component()(
-        img_data_url=img_data_url,
+        img_path=img_path,
         nw=iw,
         nh=ih,
         max_w=960,
