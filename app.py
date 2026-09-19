@@ -42,6 +42,19 @@ if "selected_ref_page" not in st.session_state:
     st.session_state.selected_ref_page = None
 
 
+def clear_drag_selection() -> None:
+    st.session_state.bbox_pt = None
+    st.session_state.drag_raw = None
+    st.session_state.drag_clear_nonce += 1
+
+
+def on_ref_page_change() -> None:
+    ref_page = st.session_state.ref_page_widget
+    if st.session_state.selected_ref_page is not None and st.session_state.selected_ref_page != ref_page:
+        clear_drag_selection()
+    st.session_state.selected_ref_page = ref_page
+
+
 @st.cache_resource
 def component_workspace() -> tempfile.TemporaryDirectory:
     return tempfile.TemporaryDirectory(prefix="pdf_oxide_drag_component_")
@@ -305,10 +318,8 @@ if uploaded is not None:
 
     if is_new_file:
         st.session_state.uploaded_hash = digest
-        st.session_state.bbox_pt = None
-        st.session_state.drag_raw = None
+        clear_drag_selection()
         st.session_state.selected_ref_page = None
-        st.session_state.drag_clear_nonce += 1
 
 # session_state にキャッシュがあればそれを使う
 if st.session_state.uploaded_bytes:
@@ -326,12 +337,8 @@ if st.session_state.uploaded_bytes:
     n = doc.page_count()
     st.info(f"ページ数: {n}（ファイル: {st.session_state.uploaded_name or 'unknown'}）")
 
-    ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1)
-    if st.session_state.selected_ref_page != ref_page:
-        if st.session_state.selected_ref_page is not None:
-            st.session_state.bbox_pt = None
-            st.session_state.drag_raw = None
-            st.session_state.drag_clear_nonce += 1
+    ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1, key="ref_page_widget", on_change=on_ref_page_change)
+    if st.session_state.selected_ref_page is None:
         st.session_state.selected_ref_page = ref_page
     llx, lly, urx, ury = doc.page_media_box(ref_page)
     pt_w = urx - llx
@@ -397,9 +404,7 @@ if st.session_state.uploaded_bytes:
             f" — 幅 {x2-x1:.0f}×高さ {y2-y1:.0f} pt"
         )
         if st.button("🔄 クリア"):
-            st.session_state.bbox_pt = None
-            st.session_state.drag_raw = None
-            st.session_state.drag_clear_nonce += 1
+            clear_drag_selection()
             st.rerun()
 
     mode = st.radio("抽出モード", ["テキスト抽出", "マークダウン変換", "両方"], index=0)
