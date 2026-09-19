@@ -2,7 +2,6 @@
 pdf-oxide-app — PDF 範囲指定テキスト抽出アプリ
 参照ページを画像表示 → マウスドラッグで領域指定 → within() で絞って全ページ抽出
 """
-import base64
 import hashlib
 import io
 from pathlib import Path
@@ -171,9 +170,9 @@ def drag_component():
     currentMaxW = Number(args.max_w || 960);
     wrap.style.maxWidth = `${currentMaxW}px`;
 
-    if (args.img_b64 && args.img_b64 !== currentImage) {
-      currentImage = args.img_b64;
-      I.src = `data:image/png;base64,${args.img_b64}`;
+    if (args.img_url && args.img_url !== currentImage) {
+      currentImage = args.img_url;
+      I.src = args.img_url;
     }
 
     if (args.clear_nonce !== currentClearNonce) {
@@ -256,16 +255,22 @@ if st.session_state.uploaded_bytes:
     st.caption(f"ページサイズ: {pt_w:.0f} × {pt_h:.0f} pt")
 
     DPI = 150
+    comp_dir = Path("/tmp/pdf_oxide_drag_component")
+    comp_dir.mkdir(parents=True, exist_ok=True)
+
+    ref_img_filename = f"ref_page_{ref_page}.png"
+    ref_img_path = comp_dir / ref_img_filename
     img_bytes = doc.render_page(ref_page, dpi=DPI, format="png")
-    b64 = base64.b64encode(img_bytes).decode()
+    ref_img_path.write_bytes(img_bytes)
+
     from PIL import Image
 
     img = Image.open(io.BytesIO(img_bytes))
     iw, ih = img.size
 
-    # 直接コンポーネント連携で座標を受信
+    # 画像本体は base64 で渡さず、コンポーネント同梱ディレクトリ上の相対URLを渡す
     raw_coords = drag_component()(
-        img_b64=b64,
+        img_url=ref_img_filename,
         nw=iw,
         nh=ih,
         max_w=960,
