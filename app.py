@@ -21,6 +21,9 @@ if "bbox_pt" not in st.session_state:
 if "drag_raw" not in st.session_state:
     st.session_state.drag_raw = None
 
+# ── declare_component で双方向通信可能なカスタムコンポーネント ──
+_drag_comp = st.components.v1.declare_component("pdf_drag_selector")
+
 # ── HTML コンポーネント：画像上ドラッグ → 矩形座標 (画像ピクセル) ──
 def make_drag_html(img_b64: str, nw: int, nh: int, max_w: int = 960) -> str:
     return f"""<!DOCTYPE html>
@@ -91,10 +94,9 @@ if uploaded:
     img = Image.open(io.BytesIO(img_bytes))
     iw, ih = img.size
 
-    drag_val = st.components.v1.html(
-        make_drag_html(b64, iw, ih, 960),
+    drag_val = _drag_comp(
+        html=make_drag_html(b64, iw, ih, 960),
         height=int(960 * ih / iw) + 40,
-        scrolling=False,
     )
 
     if drag_val is not None and drag_val != "":
