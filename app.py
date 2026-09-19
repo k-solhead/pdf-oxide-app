@@ -342,7 +342,15 @@ if st.session_state.uploaded_bytes:
 
     if st.session_state.selected_ref_page is None:
         st.session_state.ref_page_widget = 0
-    ref_page = st.number_input("参照ページ (0-based)", 0, n - 1, 0, step=1, key="ref_page_widget", on_change=on_ref_page_change)
+    ref_page = st.number_input(
+        "参照ページ (0-based)",
+        0,
+        n - 1,
+        st.session_state.ref_page_widget,
+        step=1,
+        key="ref_page_widget",
+        on_change=on_ref_page_change,
+    )
     if st.session_state.selected_ref_page is None:
         st.session_state.selected_ref_page = ref_page
     llx, lly, urx, ury = doc.page_media_box(ref_page)
